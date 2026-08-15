@@ -162,14 +162,15 @@ impl TrustPayEscrow {
     }
 
     /// Release the next milestone payment to the contractor. Authorized by the
-    /// contractor. Transitions the escrow to `Completed` after the final one.
+    /// client (the payer), who approves each delivered milestone. Transitions
+    /// the escrow to `Completed` after the final one.
     pub fn approve_milestone(env: Env, escrow_id: u64) {
         let mut escrow: Escrow = env
             .storage()
             .instance()
             .get(&DataKey::Escrow(escrow_id))
             .expect("escrow not found");
-        escrow.contractor.require_auth();
+        escrow.client.require_auth();
         if !escrow.funded {
             panic!("not funded");
         }

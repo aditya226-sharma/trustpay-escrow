@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contracts:
+    name: Contracts (cargo test + wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32v1-none)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "contracts -> target"
+
+      - name: Build contracts (host)
+        run: cargo build --release
+
+      - name: Run contract tests
+        run: cargo test --release
+
+      - name: Build contract WASM
+        run: |
+          cargo build --release --target wasm32v1-none \
+            -p trustpay-escrow -p trustpay-arbitrator
+
+      - name: Verify WASM artifacts exist
+        run: |
+          test -f target/wasm32v1-none/release/trustpay_escrow.wasm
+          test -f target/wasm32v1-none/release/trustpay_arbitrator.wasm
+
+  frontend:
+    name: Frontend (npm test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build production bundle
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trustpay-frontend-dist
+          path: frontend/dist
+          retention-days: 7
