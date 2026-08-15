@@ -1,0 +1,26 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.secret
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Test snapshots (generated on every run)
+contracts/**/test_snapshots/

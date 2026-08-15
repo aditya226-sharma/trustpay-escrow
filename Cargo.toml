@@ -1,0 +1,21 @@
+[workspace]
+members = ["contracts/shared", "contracts/escrow", "contracts/arbitrator"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+soroban-sdk = "27.0.6"
+soroban-sdk-testutils = { package = "soroban-sdk", version = "27.0.6", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+lto = true
+debug-assertions = false
+strip = "symbols"
+panic = "abort"
