@@ -1,5 +1,9 @@
 # TrustPay — Milestone Escrow Payments on Stellar
 
+[![CI](https://github.com/aditya226-sharma/trustpay-escrow/actions/workflows/ci.yml/badge.svg)](https://github.com/aditya226-sharma/trustpay-escrow/actions/workflows/ci.yml)
+[![Pages](https://github.com/aditya226-sharma/trustpay-escrow/actions/workflows/pages.yml/badge.svg)](https://github.com/aditya226-sharma/trustpay-escrow/actions/workflows/pages.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 TrustPay is a production-grade escrow dApp for milestone-based remote work
 payments. A client funds a smart contract, and funds are only released to the
 contractor as milestones are approved — with disputes resolved by a neutral
