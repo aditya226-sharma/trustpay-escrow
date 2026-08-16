@@ -41,8 +41,15 @@ export async function fetchEscrowEvents(startLedger: number): Promise<{
   events: LiveEvent[];
   cursor: number;
 }> {
+  // The RPC only serves events from its retention window (the most recent
+  // few thousand ledgers). Clamp the start to that window using the latest
+  // ledger so the very first poll works instead of erroring.
+  const latest = Number((await server.getLatestLedger()).sequence);
+  const retention = 1000;
+  const from = Math.max(Math.min(startLedger, latest), latest - retention);
+
   const response = await server.getEvents({
-    startLedger: Math.max(1, startLedger),
+    startLedger: from,
     filters: [
       {
         type: "contract",
