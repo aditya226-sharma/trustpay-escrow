@@ -12,7 +12,7 @@ import {
 } from "./lib/contracts";
 import { fetchEscrowEvents, type LiveEvent } from "./lib/events";
 import { connectWallet, detectWallet, type WalletState } from "./lib/wallet";
-import { ARBITRATOR_CONTRACT, ESCROW_CONTRACT, TOKEN_CONTRACT } from "./config";
+import { ARBITRATOR_CONTRACT, ESCROW_CONTRACT, TOKEN_CONTRACT, TOKEN_SYMBOL } from "./config";
 import { escrowProgress, fmtAmount, formatAddress } from "./lib/format";
 
 type Tx = {
@@ -51,7 +51,8 @@ export default function App() {
         const c = await getEscrowCount(pk);
         setCount(c);
         const rows: Array<{ id: number; data: EscrowData }> = [];
-        for (let id = 0; id < c; id++) {
+        // Escrow ids are 1-based (the first escrow created has id 1).
+        for (let id = 1; id <= c; id++) {
           const data = await getEscrow(pk, id);
           rows.push({ id, data });
         }
@@ -305,7 +306,7 @@ export default function App() {
                   <dt>Arbitrator contract</dt>
                   <dd>{ARBITRATOR_CONTRACT}</dd>
                   <dt>Token</dt>
-                  <dd>{TOKEN_CONTRACT} (USDC testnet)</dd>
+                  <dd>{TOKEN_CONTRACT} (testnet asset)</dd>
                   <dt>Total escrows on-chain</dt>
                   <dd>{count}</dd>
                 </dl>
@@ -370,7 +371,7 @@ function CreateEscrowForm({
     setError(null);
     const amountNum = Number(amount);
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      setError("Amount must be a positive number of USDC.");
+      setError(`Amount must be a positive number of ${TOKEN_SYMBOL}.`);
       return;
     }
     const ms = Math.round(Number(milestones));
@@ -412,7 +413,7 @@ function CreateEscrowForm({
         </div>
         <div className="form-row two">
           <label>
-            Amount (USDC)
+            Amount
             <input
               type="number"
               value={amount}
@@ -474,7 +475,7 @@ function EscrowCard({
         <span className="escrow-id">#{id}</span>
         <span className={`badge badge-${data.status.toLowerCase()}`}>{data.status}</span>
       </div>
-      <div className="escrow-amount">{fmtAmount(data.amount)} <span className="unit">USDC</span></div>
+      <div className="escrow-amount">{fmtAmount(data.amount)} <span className="unit">{TOKEN_SYMBOL}</span></div>
       <div className="escrow-roles">
         <div>
           <span className="muted small">Client</span>

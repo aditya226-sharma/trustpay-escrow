@@ -33,6 +33,9 @@ export const TOKEN_CONTRACT = env(
   "CDBM4XZH7KIEYJVXI73F32J4NJC4QA4XZQTD66WTMCQPSTMDYQF3WHVK",
 );
 
+// Display symbol for the token shown in the UI.
+export const TOKEN_SYMBOL = env("VITE_TOKEN_SYMBOL", "TRST");
+
 // A testnet contract used as the neutral arbitrator for demo escrows.
 export const ARBITRATOR_CONTRACT = env(
   "VITE_ARBITRATOR_CONTRACT",

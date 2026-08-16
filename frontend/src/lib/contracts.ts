@@ -9,7 +9,8 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import FreighterApi from "@stellar/freighter-api";
-import { ESCROW_CONTRACT, NETWORK, NETWORK_PASSPHRASE } from "../config";
+import { ESCROW_CONTRACT, NETWORK, NETWORK_PASSPHRASE, TOKEN_SYMBOL } from "../config";
+import { wholeToBaseUnits } from "./format";
 
 const server = new rpc.Server(NETWORK.rpcUrl);
 const horizon = new Horizon.Server(NETWORK.horizonUrl);
@@ -33,6 +34,46 @@ export const STATUS_LABELS: Record<string, string> = {
   Refunded: "Refunded",
   Disputed: "Disputed",
 };
+
+// Soroban enums are returned as their u32 discriminant.
+const STATUS_BY_CODE = ["Active", "Completed", "Refunded", "Disputed"];
+
+export function parseEscrow(raw: unknown): EscrowData {
+  // The contract serializes the Escrow struct as a Vec; in field order.
+  if (Array.isArray(raw)) {
+    const [
+      client,
+      contractor,
+      arbitrator,
+      token,
+      amount,
+      milestone_count,
+      current_milestone,
+      funded,
+      status,
+      created_at,
+    ] = raw;
+    return {
+      client: String(client),
+      contractor: String(contractor),
+      arbitrator: String(arbitrator),
+      token: String(token),
+      amount: typeof amount === "bigint" ? amount : BigInt(Number(amount)),
+      milestone_count: Number(milestone_count),
+      current_milestone: Number(current_milestone),
+      funded: Boolean(funded),
+      status: STATUS_BY_CODE[Number(status)] ?? String(status),
+      created_at: typeof created_at === "bigint" ? created_at : BigInt(Number(created_at)),
+    };
+  }
+  const rec = raw as EscrowData;
+  if (Array.isArray(rec.status)) {
+    rec.status = STATUS_BY_CODE[Number(rec.status[0])] ?? String(rec.status[0]);
+  } else if (typeof rec.status === "number") {
+    rec.status = STATUS_BY_CODE[rec.status] ?? String(rec.status);
+  }
+  return rec;
+}
 
 const escrow = new Contract(ESCROW_CONTRACT);
 
@@ -74,12 +115,31 @@ async function signAndSend(tx: Transaction): Promise<Transaction> {
 /** Polls until the submitted transaction is confirmed on-chain. */
 export async function waitForConfirmation(hash: string): Promise<boolean> {
   for (let i = 0; i < 20; i++) {
-    const result = await server.getTransaction(hash);
-    if (result.status === "SUCCESS") return true;
-    if (result.status === "FAILED") return false;
+    const status = await getTransactionStatus(hash);
+    if (status === "SUCCESS") return true;
+    if (status === "FAILED") return false;
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error("Timed out waiting for the transaction to confirm");
+}
+
+// The SDK's typed getTransaction() fails to decode some response variants on
+// current testnet (\"Bad union switch\"). Querying the RPC over plain JSON
+// avoids decoding the full result and just reads the status field.
+async function getTransactionStatus(hash: string): Promise<string> {
+  const res = await fetch(NETWORK.rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: { hash },
+    }),
+  });
+  const body = await res.json();
+  const status: string = body?.result?.status ?? "NOT_FOUND";
+  return status;
 }
 
 async function runAction(
@@ -147,11 +207,11 @@ export async function getEscrow(publicKey: string, id: number): Promise<EscrowDa
     .build();
   const sim = await simulate(tx);
   if (!sim.result?.retval) throw new Error("No result returned");
-  const raw = scValToNative(sim.result.retval) as unknown as EscrowData;
+  const raw = scValToNative(sim.result.retval);
   if (!raw || typeof raw !== "object") {
     throw new Error(`Escrow #${id} was not found on the testnet.`);
   }
-  return raw;
+  return parseEscrow(raw);
 }
 
 export type CreateParams = {
@@ -177,12 +237,12 @@ export async function createEscrow(
       address(p.contractor),
       address(p.arbitrator),
       address(p.token),
-      i128(p.amount),
+      i128(wholeToBaseUnits(p.amount)),
       u32(p.milestoneCount),
     );
   }, onHash);
   const count = await getEscrowCount(publicKey);
-  createdId = count - 1;
+  createdId = count;
   return createdId;
 }
 
@@ -207,7 +267,7 @@ export async function mutualRefund(publicKey: string, id: number, onHash: (hash:
 }
 
 export function tokenName(): string {
-  return "USDC";
+  return TOKEN_SYMBOL;
 }
 
 export { server, horizon };

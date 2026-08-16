@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escrowProgress, fmtAmount, formatAddress } from "../format";
+import { escrowProgress, fmtAmount, formatAddress, wholeToBaseUnits } from "../format";
 
 describe("formatAddress", () => {
   it("truncates long addresses", () => {
@@ -14,13 +14,21 @@ describe("formatAddress", () => {
 });
 
 describe("fmtAmount", () => {
-  it("converts base units (10^7) to whole USDC", () => {
+  it("converts base units (10^7) to whole tokens", () => {
     expect(fmtAmount(10_000_000n)).toBe("1");
     expect(fmtAmount(50_000_000n)).toBe("5");
   });
 
   it("handles fractional amounts", () => {
     expect(fmtAmount(1_250_000n)).toBe("0.125");
+  });
+});
+
+describe("wholeToBaseUnits", () => {
+  it("converts whole tokens to 7-decimal base units", () => {
+    expect(wholeToBaseUnits(1000)).toBe(10_000_000_000n);
+    expect(wholeToBaseUnits(1)).toBe(10_000_000n);
+    expect(wholeToBaseUnits(0.5)).toBe(5_000_000n);
   });
 });
 

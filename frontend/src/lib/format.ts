@@ -4,10 +4,15 @@ export function formatAddress(addr: string): string {
 }
 
 export function fmtAmount(amount: bigint | number): string {
-  // Amounts are stored in base units (1 USDC = 10^7).
+  // Amounts are stored in base units (1 token = 10^7).
   return (Number(amount) / 1e7).toLocaleString("en-US", {
     maximumFractionDigits: 7,
   });
+}
+
+export function wholeToBaseUnits(whole: number): bigint {
+  // The demo asset (SAC) uses 7 decimals, matching the fmtAmount divisor.
+  return BigInt(Math.round(whole * 1e7));
 }
 
 export function escrowProgress(current: number, total: number): number {
