@@ -37,9 +37,18 @@ as each transaction confirms.
 - **Resolve dispute** — the admin releases funds to the client or contractor
   based on the arbitrator's recorded decision.
 - **Mutual refund** — both parties agree to refund the remaining balance.
+- **Expiry refund** — every escrow has an `expires_at` deadline; after it
+  passes, **anyone** can trigger a refund of the remaining balance, so funds
+  never get stuck in an abandoned escrow.
+- **Delivery proof** — the contractor can anchor a SHA-256 digest of the
+  delivery artefact on-chain before the client approves, giving a tamper-proof
+  receipt of what was handed over.
+- **Custom release** — the client can release a partial amount at any time
+  (not just a full milestone), e.g. to pay instalments or settle disputes
+  off-chain.
 - **Live events** — every transition (`Created`, `Funded`, `Released`,
-  `Disputed`, `Resolved`, `Refunded`) publishes a Soroban event that the
-  frontend streams in real time.
+  `Disputed`, `Resolved`, `Refunded`, `Expired`, `Proof`) publishes a Soroban
+  event that the frontend streams in real time.
 
 ## Architecture
 
@@ -123,7 +132,7 @@ Admin / issuer: `GBTSHC3K2OZZFVAXUXZRSOOLW62FOE675WEDFIEH5GSI2CFD4H32MGJC`
 ### Contracts
 
 ```bash
-cargo test --release            # 15 unit tests (escrow + arbitrator)
+cargo test --release            # 22 unit tests (escrow + arbitrator)
 cargo build --release --target wasm32v1-none   # WebAssembly artifacts
 ```
 
@@ -152,16 +161,26 @@ stellar contract invoke   --network testnet --source deployer --id <ESCROW> -- i
 # Interact (source = the calling account)
 stellar contract invoke --network testnet --source client --id <ESCROW> -- create \
   --client <CLIENT> --contractor <CONTRACTOR> --arbitrator <ARBITRATOR> \
-  --token <TOKEN> --amount 10000000000 --milestone_count 3
+  --token <TOKEN> --amount 10000000000 --milestone_count 3 \
+  --expires_at $(($(date +%s) + 86400))   # expiry deadline in unix seconds
 stellar contract invoke --network testnet --source client --id <ESCROW> -- fund --escrow_id 1
 stellar contract invoke --network testnet --source client --id <ESCROW> -- approve_milestone --escrow_id 1
+# contractor anchors a delivery proof hash (64 hex = SHA-256 digest)
+stellar contract invoke --network testnet --source contractor --id <ESCROW> -- \
+  submit_delivery_proof --escrow_id 1 --proof <64-hex>
+# client releases a partial amount (not a full milestone)
+stellar contract invoke --network testnet --source client --id <ESCROW> -- \
+  release_amount --escrow_id 1 --amount 2500000000
+# anyone can claim the refund once the escrow has expired
+stellar contract invoke --network testnet --source anyone --id <ESCROW> -- \
+  claim_expired_refund --escrow_id 1
 ```
 
 ## CI/CD
 
 GitHub Actions runs on every push to `main`:
 
-- **Contracts** — `cargo test` (15 tests) plus a `wasm32v1-none` build that
+- **Contracts** — `cargo test` (22 tests) plus a `wasm32v1-none` build that
   asserts both WASM artifacts are produced.
 - **Frontend** — `npm ci`, `npm test` (vitest), `npm run build`.
 - **Pages** — deploys `frontend/dist` to GitHub Pages.
