@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   approveMilestone,
+  claimExpiredRefund,
   createEscrow,
   fundEscrow,
   getEscrow,
   getEscrowCount,
   mutualRefund,
   raiseDispute,
+  releaseAmount,
   resolveDispute,
+  submitDeliveryProof,
   type EscrowData,
 } from "./lib/contracts";
 import { fetchEscrowEvents, type LiveEvent } from "./lib/events";
@@ -130,9 +133,11 @@ export default function App() {
     contractor: string;
     amount: number;
     milestones: number;
+    expiresInDays: number;
   }) => {
     if (!publicKey) return;
     await run("Escrow created", async () => {
+      const expiresAt = Math.floor(Date.now() / 1000) + p.expiresInDays * 86400;
       await createEscrow(
         publicKey,
         {
@@ -142,6 +147,7 @@ export default function App() {
           token: TOKEN_CONTRACT,
           amount: p.amount,
           milestoneCount: p.milestones,
+          expiresAt,
         },
         (hash) => setTx((t) => ({ ...t, hash })),
       );
@@ -175,6 +181,14 @@ export default function App() {
         label: "Mutual refund",
         fn: () => run("Refund executed", () => mutualRefund(publicKey!, id, (h) => setTx((t) => ({ ...t, hash: h })))),
         disabled: data.status !== "Active",
+      },
+      {
+        label: "Claim expired refund",
+        fn: () => run("Expired refund claimed", () => claimExpiredRefund(publicKey!, id, (h) => setTx((t) => ({ ...t, hash: h })))),
+        disabled:
+          data.status !== "Active" ||
+          !data.funded ||
+          Number(data.expires_at) > Math.floor(Date.now() / 1000),
       },
     ];
     return actions;
@@ -273,6 +287,16 @@ export default function App() {
                       publicKey={publicKey}
                       disabled={tx.pending}
                       actions={escrowActions(id, data)}
+                      onRelease={(amount) =>
+                        run("Custom release executed", () =>
+                          releaseAmount(publicKey, id, amount, (h) => setTx((t) => ({ ...t, hash: h }))),
+                        )
+                      }
+                      onProof={(hex) =>
+                        run("Delivery proof anchored", () =>
+                          submitDeliveryProof(publicKey, id, hex, (h) => setTx((t) => ({ ...t, hash: h }))),
+                        )
+                      }
                     />
                   ))}
                 </div>
@@ -357,12 +381,13 @@ function CreateEscrowForm({
   clientAddress,
 }: {
   disabled: boolean;
-  onSubmit: (p: { contractor: string; amount: number; milestones: number }) => Promise<void>;
+  onSubmit: (p: { contractor: string; amount: number; milestones: number; expiresInDays: number }) => Promise<void>;
   clientAddress: string;
 }) {
   const [contractor, setContractor] = useState("");
   const [amount, setAmount] = useState("500");
   const [milestones, setMilestones] = useState("3");
+  const [expiresInDays, setExpiresInDays] = useState("30");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -379,13 +404,18 @@ function CreateEscrowForm({
       setError("Milestones must be between 1 and 12.");
       return;
     }
+    const days = Math.round(Number(expiresInDays));
+    if (!Number.isFinite(days) || days < 1 || days > 365) {
+      setError("Expiry must be between 1 and 365 days.");
+      return;
+    }
     if (!/^G[A-Z0-9]{55}$/.test(contractor.trim())) {
       setError("Contractor address must be a valid Stellar G… address.");
       return;
     }
     setSubmitting(true);
     try {
-      await onSubmit({ contractor: contractor.trim(), amount: amountNum, milestones: ms });
+      await onSubmit({ contractor: contractor.trim(), amount: amountNum, milestones: ms, expiresInDays: days });
       setContractor("");
     } catch {
       // Error banner is rendered by the parent.
@@ -437,7 +467,24 @@ function CreateEscrowForm({
               disabled={disabled || submitting}
             />
           </label>
+          <label>
+            Expires in (days)
+            <input
+              type="number"
+              value={expiresInDays}
+              onChange={(e) => setExpiresInDays(e.target.value)}
+              min={1}
+              max={365}
+              step={1}
+              required
+              disabled={disabled || submitting}
+            />
+          </label>
         </div>
+        <p className="muted small">
+          After the expiry date passes, anyone can claim a refund of the remaining
+          balance — funds never get stuck.
+        </p>
         {error && <p className="form-error">{error}</p>}
         <div className="form-foot">
           <p className="muted small">
@@ -458,16 +505,26 @@ function EscrowCard({
   publicKey,
   disabled,
   actions,
+  onRelease,
+  onProof,
 }: {
   id: number;
   data: EscrowData;
   publicKey: string;
   disabled: boolean;
   actions: Array<{ label: string; fn: () => Promise<void>; disabled: boolean }>;
+  onRelease: (amount: number) => Promise<void>;
+  onProof: (hex: string) => Promise<void>;
 }) {
   const progress = escrowProgress(data.current_milestone, data.milestone_count);
   const isClient = data.client === publicKey;
   const isContractor = data.contractor === publicKey;
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [releaseValue, setReleaseValue] = useState("");
+  const [proofValue, setProofValue] = useState("");
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expired = data.status === "Active" && Number(data.expires_at) <= nowSec;
+  const remaining = data.amount - data.released;
 
   return (
     <div className={`escrow-card status-${data.status.toLowerCase()}`}>
@@ -495,8 +552,23 @@ function EscrowCard({
           <div className="progress-fill" style={{ width: `${progress}%` }} />
         </div>
         <span className="muted small">
-          Milestone {data.current_milestone} / {data.milestone_count}
+          Milestone {data.current_milestone} / {data.milestone_count} · released{" "}
+          {fmtAmount(data.released)} / {fmtAmount(data.amount)}
         </span>
+      </div>
+      <div className="escrow-meta">
+        <span className={`muted small ${expired ? "expired" : ""}`}>
+          {data.status === "Active"
+            ? expired
+              ? "Expired — refund can be claimed"
+              : `Expires ${new Date(Number(data.expires_at) * 1000).toLocaleString()}`
+            : "Closed"}
+        </span>
+        {data.proof && (
+          <span className="muted small" title="Delivery proof hash (SHA-256)">
+            proof {data.proof.slice(0, 10)}…
+          </span>
+        )}
       </div>
       <div className="escrow-actions">
         {actions
@@ -507,6 +579,66 @@ function EscrowCard({
             </button>
           ))}
         {actions.every((a) => a.disabled) && <span className="muted small">No actions available</span>}
+      </div>
+      <div className="escrow-advanced">
+        <button
+          className="linklike small"
+          onClick={() => setShowAdvanced((s) => !s)}
+          disabled={disabled}
+        >
+          {showAdvanced ? "Hide" : "Show"} advanced
+        </button>
+        {showAdvanced && (
+          <div className="advanced-row">
+            {isClient && data.status === "Active" && data.funded && (
+              <div className="inline-form">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={`Release up to ${fmtAmount(remaining)}`}
+                  value={releaseValue}
+                  onChange={(e) => setReleaseValue(e.target.value)}
+                  disabled={disabled}
+                />
+                <button
+                  className="btn btn-outline btn-sm"
+                  disabled={disabled || !releaseValue}
+                  onClick={async () => {
+                    const v = Number(releaseValue);
+                    if (!Number.isFinite(v) || v <= 0) return;
+                    await onRelease(v);
+                    setReleaseValue("");
+                  }}
+                >
+                  Custom release
+                </button>
+              </div>
+            )}
+            {isContractor && data.status === "Active" && (
+              <div className="inline-form">
+                <input
+                  type="text"
+                  placeholder="Delivery proof hash (64 hex)"
+                  value={proofValue}
+                  onChange={(e) => setProofValue(e.target.value)}
+                  disabled={disabled}
+                />
+                <button
+                  className="btn btn-outline btn-sm"
+                  disabled={disabled || !proofValue.trim()}
+                  onClick={async () => {
+                    await onProof(proofValue.trim());
+                    setProofValue("");
+                  }}
+                >
+                  Anchor proof
+                </button>
+              </div>
+            )}
+            {!isClient && !isContractor && <span className="muted small">Actions are reserved for the client and contractor.</span>}
+          </div>
+        )}
       </div>
     </div>
   );

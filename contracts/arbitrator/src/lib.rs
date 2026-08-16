@@ -1,5 +1,4 @@
 #![no_std]
-
 #![allow(deprecated)]
 
 //! TrustPay Arbitrator
@@ -46,18 +45,17 @@ impl TrustPayArbitrator {
         let decided_by = env.current_contract_address();
         let decided_at = env.ledger().timestamp();
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Decision(escrow_id), &DecisionRecord {
+        env.storage().instance().set(
+            &DataKey::Decision(escrow_id),
+            &DecisionRecord {
                 decision,
                 decided_by,
                 decided_at,
-            });
-
-        env.events().publish(
-            (symbol_short!("decision"), escrow_id),
-            decision,
+            },
         );
+
+        env.events()
+            .publish((symbol_short!("decision"), escrow_id), decision);
     }
 
     /// Reads the stored decision for an escrow id, if any.

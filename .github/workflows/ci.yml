@@ -17,10 +17,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "contracts -> target"
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint (clippy, warnings as errors)
+        run: cargo clippy --release --all-targets -- -D warnings
 
       - name: Build contracts (host)
         run: cargo build --release

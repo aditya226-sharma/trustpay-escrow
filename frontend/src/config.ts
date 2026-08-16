@@ -23,7 +23,7 @@ export function env(name: string, fallback: string): string {
 
 export const ESCROW_CONTRACT = env(
   "VITE_ESCROW_CONTRACT",
-  "CCN4BHFSAAIOU4WC2PYBSFZ5WQLID7CJ7OXO44KYOAYGTTMVCXXMB5SQ",
+  "CAARHR7ZCCQESZNKHEB672EEBK3CXOEDGYW7XQ2DHJNFKXSTQB64GIOE",
 );
 
 // TRST demo token (Stellar Asset Contract), issued on testnet by the

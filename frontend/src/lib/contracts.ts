@@ -26,6 +26,9 @@ export type EscrowData = {
   funded: boolean;
   status: string;
   created_at: bigint;
+  expires_at: bigint;
+  released: bigint;
+  proof: string | null;
 };
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -37,6 +40,17 @@ export const STATUS_LABELS: Record<string, string> = {
 
 // Soroban enums are returned as their u32 discriminant.
 const STATUS_BY_CODE = ["Active", "Completed", "Refunded", "Disputed"];
+
+/** A Soroban BytesN<32> (proof hash) is returned as a Buffer. */
+function proofToHex(proof: unknown): string | null {
+  if (!proof) return null;
+  if (typeof proof === "string") return proof;
+  const bytes = proof instanceof Uint8Array ? proof : Array.isArray(proof) ? Uint8Array.from(proof as number[]) : null;
+  if (!bytes) return null;
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export function parseEscrow(raw: unknown): EscrowData {
   // The contract serializes the Escrow struct as a Vec; in field order.
@@ -52,6 +66,9 @@ export function parseEscrow(raw: unknown): EscrowData {
       funded,
       status,
       created_at,
+      expires_at,
+      released,
+      proof,
     ] = raw;
     return {
       client: String(client),
@@ -64,6 +81,10 @@ export function parseEscrow(raw: unknown): EscrowData {
       funded: Boolean(funded),
       status: STATUS_BY_CODE[Number(status)] ?? String(status),
       created_at: typeof created_at === "bigint" ? created_at : BigInt(Number(created_at)),
+      expires_at:
+        typeof expires_at === "bigint" ? expires_at : BigInt(Number(expires_at)),
+      released: typeof released === "bigint" ? released : BigInt(Number(released)),
+      proof: proofToHex(proof),
     };
   }
   const rec = raw as EscrowData;
@@ -72,6 +93,7 @@ export function parseEscrow(raw: unknown): EscrowData {
   } else if (typeof rec.status === "number") {
     rec.status = STATUS_BY_CODE[rec.status] ?? String(rec.status);
   }
+  rec.proof = proofToHex(rec.proof);
   return rec;
 }
 
@@ -221,6 +243,7 @@ export type CreateParams = {
   token: string;
   amount: number;
   milestoneCount: number;
+  expiresAt: number;
 };
 
 export async function createEscrow(
@@ -239,6 +262,7 @@ export async function createEscrow(
       address(p.token),
       i128(wholeToBaseUnits(p.amount)),
       u32(p.milestoneCount),
+      u64(p.expiresAt),
     );
   }, onHash);
   const count = await getEscrowCount(publicKey);
@@ -264,6 +288,50 @@ export async function resolveDispute(publicKey: string, id: number, onHash: (has
 
 export async function mutualRefund(publicKey: string, id: number, onHash: (hash: string) => void): Promise<void> {
   await runAction(publicKey, () => escrowCall("mutual_refund", u64(id)), onHash);
+}
+
+export async function releaseAmount(
+  publicKey: string,
+  id: number,
+  amount: number,
+  onHash: (hash: string) => void,
+): Promise<void> {
+  await runAction(publicKey, () => escrowCall("release_amount", u64(id), i128(wholeToBaseUnits(amount))), onHash);
+}
+
+export async function claimExpiredRefund(
+  publicKey: string,
+  id: number,
+  onHash: (hash: string) => void,
+): Promise<void> {
+  await runAction(publicKey, () => escrowCall("claim_expired_refund", u64(id)), onHash);
+}
+
+export async function submitDeliveryProof(
+  publicKey: string,
+  id: number,
+  proofHex: string,
+  onHash: (hash: string) => void,
+): Promise<void> {
+  const bytes = hexToBytes(proofHex);
+  if (bytes.length !== 32) {
+    throw new Error("Proof must be exactly 64 hex characters (SHA-256 digest)");
+  }
+  await runAction(publicKey, () => escrowCall("submit_delivery_proof", u64(id), xdr.ScVal.scvBytes(bytes)), onHash);
+}
+
+export async function setPaused(publicKey: string, paused: boolean, onHash: (hash: string) => void): Promise<void> {
+  await runAction(publicKey, () => escrowCall("set_paused", xdr.ScVal.scvBool(paused)), onHash);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.replace(/^0x/i, "");
+  if (clean.length % 2 !== 0) throw new Error("Invalid hex");
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
 
 export function tokenName(): string {

@@ -5,7 +5,7 @@ import { parseEscrow } from "../contracts";
 // and the Status enum arrives as its u32 discriminant. parseEscrow normalises
 // this into the shape the UI renders.
 describe("parseEscrow", () => {
-  it("maps a raw struct array to EscrowData", () => {
+  it("maps a raw struct array to EscrowData (v2 fields)", () => {
     const raw = [
       "GBDCLIENT",
       "GBDCONTRACTOR",
@@ -17,8 +17,12 @@ describe("parseEscrow", () => {
       true,
       0,
       123456789n,
+      124016789n,
+      500_000_000n,
+      new Uint8Array(32),
     ];
-    expect(parseEscrow(raw)).toEqual({
+    const parsed = parseEscrow(raw);
+    expect(parsed).toEqual({
       client: "GBDCLIENT",
       contractor: "GBDCONTRACTOR",
       arbitrator: "CBQARBITRATOR",
@@ -29,12 +33,15 @@ describe("parseEscrow", () => {
       funded: true,
       status: "Active",
       created_at: 123456789n,
+      expires_at: 124016789n,
+      released: 500_000_000n,
+      proof: "0000000000000000000000000000000000000000000000000000000000000000",
     });
   });
 
   it("maps the status enum discriminant to a label", () => {
     const base = (status: number) =>
-      ["GBDC", "GBDC", "CBQ", "CDB", 100n, 2, 0, true, status, 1n];
+      ["GBDC", "GBDC", "CBQ", "CDB", 100n, 2, 0, true, status, 1n, 2n, 0n, null];
     expect(parseEscrow(base(0)).status).toBe("Active");
     expect(parseEscrow(base(1)).status).toBe("Completed");
     expect(parseEscrow(base(2)).status).toBe("Refunded");
@@ -54,6 +61,9 @@ describe("parseEscrow", () => {
         funded: true,
         status: ["Completed"],
         created_at: 1n,
+        expires_at: 2n,
+        released: 0n,
+        proof: null,
       }).status,
     ).toBe("Completed");
   });
@@ -62,6 +72,12 @@ describe("parseEscrow", () => {
     expect(parseEscrow({ status: "Active", amount: 5n })).toEqual({
       status: "Active",
       amount: 5n,
+      proof: null,
     });
+  });
+
+  it("decodes a proof Buffer to hex", () => {
+    const raw = ["GBDC", "GBDC", "CBQ", "CDB", 100n, 1, 0, true, 0, 1n, 2n, 0n, new Uint8Array([0xaa, 0xbb])];
+    expect(parseEscrow(raw).proof).toBe("aabb");
   });
 });

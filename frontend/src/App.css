@@ -388,6 +388,43 @@ code {
   gap: 8px;
 }
 
+.escrow-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.escrow-meta .expired {
+  color: var(--red, #ff6b6b);
+  font-weight: 600;
+}
+
+.escrow-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.escrow-advanced .advanced-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.escrow-advanced .inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.escrow-advanced .inline-form input {
+  flex: 1;
+  min-width: 180px;
+}
+
 .badge {
   padding: 3px 10px;
   border-radius: 999px;

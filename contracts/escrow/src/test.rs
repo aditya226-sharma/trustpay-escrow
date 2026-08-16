@@ -5,7 +5,10 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Events, token, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Events, Ledger},
+    token, Address, BytesN, Env,
+};
 use trustpay_arbitrator::{TrustPayArbitrator, TrustPayArbitratorClient};
 use trustpay_shared::Decision;
 
@@ -55,6 +58,14 @@ fn setup() -> Setup {
     }
 }
 
+fn now(s: &Setup) -> u64 {
+    s.env.ledger().timestamp()
+}
+
+fn set_time(s: &Setup, ts: u64) {
+    s.env.ledger().with_mut(|l| l.timestamp = ts);
+}
+
 fn client_balance(s: &Setup) -> i128 {
     token::Client::new(&s.env, &s.token_addr).balance(&s.client)
 }
@@ -75,6 +86,7 @@ fn create_default(s: &Setup) -> u64 {
         &s.token_addr,
         &10_000i128,
         &3,
+        &(now(s) + 3_600),
     )
 }
 
@@ -89,6 +101,9 @@ fn create_and_fund_moves_tokens_into_escrow() {
     let escrow = s.escrow.get_escrow(&id);
     assert!(escrow.funded);
     assert_eq!(escrow.status, Status::Active);
+    assert_eq!(escrow.expires_at, now(&s) + 3_600);
+    assert_eq!(escrow.released, 0);
+    assert!(escrow.proof.is_none());
     assert_eq!(escrow_balance(&s), 10_000);
     assert_eq!(client_balance(&s), s.minted - 10_000);
 }
@@ -107,10 +122,11 @@ fn milestone_release_pays_contractor_per_milestone() {
     // 10_000 / 3 = 3_333 per milestone (integer division)
     assert_eq!(contractor_balance(&s), 3_333);
     assert_eq!(escrow_balance(&s), 6_667);
+    assert_eq!(escrow.released, 3_333);
 }
 
 #[test]
-fn completing_all_milestones_marks_escrow_completed() {
+fn final_milestone_releases_the_exact_remaining_balance() {
     let s = setup();
     let id = create_default(&s);
     s.escrow.fund(&id);
@@ -122,8 +138,161 @@ fn completing_all_milestones_marks_escrow_completed() {
     let escrow = s.escrow.get_escrow(&id);
     assert_eq!(escrow.status, Status::Completed);
     assert_eq!(escrow.current_milestone, 3);
-    // 3 * 3333 = 9_999; the remaining 1 stays in escrow (integer math).
-    assert_eq!(contractor_balance(&s), 9_999);
+    // 3_333 + 3_333 + 3_334 = 10_000: no integer-division dust is stuck.
+    assert_eq!(contractor_balance(&s), 10_000);
+    assert_eq!(escrow_balance(&s), 0);
+    assert_eq!(escrow.released, 10_000);
+}
+
+#[test]
+fn release_amount_supports_partial_custom_payments() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+
+    // Custom release of 2_500 (e.g. a bonus) outside the milestone schedule.
+    s.escrow.release_amount(&id, &2_500);
+
+    let escrow = s.escrow.get_escrow(&id);
+    assert_eq!(escrow.status, Status::Active);
+    assert_eq!(escrow.released, 2_500);
+    assert_eq!(escrow.current_milestone, 0);
+    assert_eq!(contractor_balance(&s), 2_500);
+    assert_eq!(escrow_balance(&s), 7_500);
+}
+
+#[test]
+fn release_amount_completes_when_everything_is_released() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+
+    s.escrow.release_amount(&id, &6_000);
+    s.escrow.release_amount(&id, &4_000);
+
+    assert_eq!(s.escrow.get_escrow(&id).status, Status::Completed);
+    assert_eq!(contractor_balance(&s), 10_000);
+    assert_eq!(escrow_balance(&s), 0);
+}
+
+#[test]
+#[should_panic(expected = "exceeds remaining")]
+fn release_amount_cannot_exceed_remaining() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+    s.escrow.release_amount(&id, &10_001);
+}
+
+#[test]
+fn expired_escrow_can_be_refunded_by_anyone() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+    s.escrow.approve_milestone(&id);
+
+    // Time passes past the expiry.
+    set_time(&s, now(&s) + 10_000);
+    // A stranger closes the abandoned escrow.
+    let stranger = Address::generate(&s.env);
+    let _ = stranger; // no auth needed: callable by anyone
+    s.escrow.claim_expired_refund(&id);
+
+    let escrow = s.escrow.get_escrow(&id);
+    assert_eq!(escrow.status, Status::Refunded);
+    // Remaining (10_000 - 3_333) returns to the client.
+    assert_eq!(client_balance(&s), s.minted - 3_333);
+    assert_eq!(escrow_balance(&s), 0);
+}
+
+#[test]
+#[should_panic(expected = "not expired")]
+fn cannot_claim_refund_before_expiry() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+    s.escrow.claim_expired_refund(&id);
+}
+
+#[test]
+#[should_panic(expected = "expiry must be in the future")]
+fn create_rejects_past_expiry() {
+    let s = setup();
+    s.escrow.create(
+        &s.client,
+        &s.contractor,
+        &s.arbitrator_addr,
+        &s.token_addr,
+        &10_000i128,
+        &3,
+        &now(&s),
+    );
+}
+
+#[test]
+fn pause_blocks_release_until_resumed() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+
+    s.escrow.set_paused(&true);
+    assert!(s.escrow.paused());
+
+    let res = s.escrow.try_approve_milestone(&id);
+    assert!(res.is_err());
+    let res = s.escrow.try_mutual_refund(&id);
+    assert!(res.is_err());
+
+    s.escrow.set_paused(&false);
+    s.escrow.approve_milestone(&id);
+    assert_eq!(s.escrow.get_escrow(&id).current_milestone, 1);
+}
+
+#[test]
+fn pause_blocks_claiming_expired_refund() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+    set_time(&s, now(&s) + 10_000);
+
+    s.escrow.set_paused(&true);
+    let res = s.escrow.try_claim_expired_refund(&id);
+    assert!(res.is_err());
+    assert_eq!(s.escrow.get_escrow(&id).status, Status::Active);
+}
+
+#[test]
+fn contractor_can_anchor_delivery_proof() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+
+    let proof = BytesN::from_array(&s.env, &[0xaa; 32]);
+    s.escrow.submit_delivery_proof(&id, &proof);
+
+    // The proof event is published for off-chain streaming (the test host
+    // records events for the most recent invocation).
+    assert_eq!(s.env.events().all().events().len(), 1);
+
+    assert_eq!(s.escrow.get_proof(&id).unwrap(), proof);
+    assert_eq!(s.escrow.get_escrow(&id).proof.unwrap(), proof);
+}
+
+#[test]
+fn submit_delivery_proof_requires_authorization() {
+    let s = setup();
+    let id = create_default(&s);
+    s.escrow.fund(&id);
+
+    // Disable the mock-all-auths used during setup: now every call must
+    // carry a real authorization entry, or require_auth reverts.
+    s.env.set_auths(&[]);
+
+    let res = s
+        .escrow
+        .try_submit_delivery_proof(&id, &BytesN::from_array(&s.env, &[1u8; 32]));
+    assert!(res.is_err());
+    assert!(s.escrow.get_proof(&id).is_none());
 }
 
 #[test]
@@ -218,6 +387,7 @@ fn create_with_zero_amount_reverts() {
         &s.token_addr,
         &0i128,
         &3,
+        &(now(&s) + 3_600),
     );
 }
 
@@ -233,6 +403,7 @@ fn fund_with_insufficient_balance_reverts() {
         &s.token_addr,
         &1_000_000i128,
         &1,
+        &(now(&s) + 3_600),
     );
     s.escrow.fund(&id);
 }
