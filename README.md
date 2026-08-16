@@ -21,7 +21,9 @@ testnet wallet (fund it with the [friendbot](https://friendbot.stellar.org)),
 then create, fund and approve an escrow. Live Soroban events stream into the UI
 as each transaction confirms.
 
-Demo video: see the [release assets](https://github.com/aditya226-sharma/trustpay-escrow/releases).
+**▶ Demo video (80s):**
+[download/stream `trustpay_demo.mp4`](https://github.com/aditya226-sharma/trustpay-escrow/releases/download/v1.0.0/trustpay_demo.mp4)
+— [release page](https://github.com/aditya226-sharma/trustpay-escrow/releases).
 
 ## What it does
 
